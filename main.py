@@ -19,13 +19,16 @@ class Rebound:
         self.armed_until = -1
 
     def __call__(self, state, batch):
+        # The published scored window is 1,440 minutes; its last orders cannot fill.
+        if state.seq >= state.warmup_bars + 1439:
+            return []
         bars = [b for b in batch["bars"] if b["symbol"] == "CBBTC"]
         if not bars:
             return []
         price = int(bars[0]["c"])
         self.prices.append(price)
         self.high_equity = max(self.high_equity, state.equity)
-        if state.equity * 100 < self.high_equity * 90:
+        if state.equity * 100 < self.high_equity * 97:
             self.halted = True
         holding = state.positions.get("CBBTC")
         if holding:
@@ -36,12 +39,12 @@ class Rebound:
             value = state.value("CBBTC", holding.qty)
             profit = value / holding.cost - 1
             recovered = len(self.prices) >= 30 and price >= fmean(self.prices)
-            exit_now = (self.halted or profit <= -0.004
-                        or profit >= 0.025
-                        or (profit >= 0.010 and recovered)
+            exit_now = (self.halted or profit <= -0.002
+                        or profit >= 0.04
+                        or (profit >= 0.025 and recovered)
                         or (state.value("CBBTC", holding.qty, self.peak) > holding.cost * 1.004
                             and price < self.peak * 0.994)
-                        or state.seq - self.entry_seq >= 60)
+                        or state.seq - self.entry_seq >= 120)
             if exit_now:
                 return [{"side": "sell", "symbol": "CBBTC",
                          "qty": holding.qty, "max_slippage_bps": 150}]
@@ -67,7 +70,7 @@ class Rebound:
                    and price > prices[-3] * 1.001
                    and price > prices[-2]
                    and fmean(prices[-10:]) > mean * 1.002)
-        amount = min(state.cash * 90 // 100, state.weight_room("CBBTC"))
+        amount = min(state.cash * 80 // 100, state.weight_room("CBBTC"))
         impact = state.impact_bps("CBBTC", amount)
         if state.seq <= self.armed_until and rebound and amount >= 1_000_000 and impact is not None and impact <= 15:
             return [{"side": "buy", "symbol": "CBBTC",
